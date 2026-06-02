@@ -76,13 +76,6 @@ headers, and the request/response body. Only the user name and the
 authentication method used are passed to the plugin. Most importantly, no user
 credentials or tokens are passed.
 
-> [!NOTE]
-> Authorization plugins enforce requests to the Docker daemon's HTTP API only. gRPC method
-> calls, whether dispatched natively or upgraded through `POST /grpc`, are not subject to authorization.
-> Furthermore, HTTP request/response bodies where the `Content-Type` is `application/json` are forwarded;
-> bodies of any other type are not visible to the plugin and cannot be used for enforcement,
-> even though the daemon acts on this data.
-
 For commands that can potentially hijack the HTTP connection (`HTTP
 Upgrade`), such as `exec`, the authorization plugin is only called for the
 initial HTTP requests. Once the plugin approves the command, authorization is
@@ -107,14 +100,30 @@ is the practical effect of this 64 KiB threshold combined with the
 is immediately drained to the client and is therefore no longer available
 for plugin inspection by the time the handler returns.
 
-> [!NOTE]
-> Plugins that depend on `ResponseBody` inspection for redaction or
-> content-filtering should restrict their policies to endpoints whose
-> response is produced as a single write (typical of REST-style API
-> responses). For commands whose responses are streamed or are likely to
-> exceed the buffer through multiple writes, do not rely on `ResponseBody`
-> for security-relevant decisions; perform the filtering in a separate
-> layer in front of the daemon.
+## Security considerations
+
+The Engine's authorization middleware fails closed: when a plugin returns
+an error to the daemon, the request is denied and the error is surfaced to the client.
+Plugins should also fail closed: if the plugin cannot confidently classify a request, it
+should return an error or `Allow: false`.
+
+Authorization plugins enforce policy on the Docker daemon's HTTP API only. gRPC method
+calls, whether dispatched natively or upgraded through `POST /grpc`, are not subject to authorization.
+Furthermore, HTTP request/response bodies whose `Content-Type` is `application/json` are forwarded;
+bodies of any other type are not visible to the plugin and cannot be used for enforcement,
+even though the daemon acts on this data.
+
+Plugins that depend on `ResponseBody` inspection for redaction or
+content-filtering should restrict their policies to endpoints whose
+response is produced as a single write (typical of REST-style API
+responses). For commands whose responses are streamed or are likely to
+exceed the buffer through multiple writes, do not rely on `ResponseBody`
+for security-relevant decisions; perform the filtering in a separate
+layer in front of the daemon.
+
+Authorization request data sent from the daemon to the plugin (e.g. `RequestURI`) are the raw values
+received by the daemon. They are not percent-decoded, nor path-normalized. These should be decoded
+and normalized by plugins to ensure they are canonical.
 
 During request/response processing, some authorization flows might
 need to do additional queries to the Docker daemon. To complete such flows,
@@ -239,7 +248,7 @@ Name                   | Type              | Description
 User                   | string            | The user identification
 Authentication method  | string            | The authentication method used
 Request method         | enum              | The HTTP method (GET/DELETE/POST)
-Request URI            | string            | The HTTP request URI including API version (e.g., v.1.17/containers/json)
+Request URI            | string            | The **raw** HTTP request URI including API version (e.g., v.1.17/containers/json)
 Request headers        | map[string]string | Request headers as key value pairs (without the authorization header)
 Request body           | []byte            | Raw request body
 
@@ -262,7 +271,7 @@ Name                    | Type              | Description
 User                    | string            | The user identification
 Authentication method   | string            | The authentication method used
 Request method          | string            | The HTTP method (GET/DELETE/POST)
-Request URI             | string            | The HTTP request URI including API version (e.g., v.1.17/containers/json)
+Request URI             | string            | The **raw** HTTP request URI including API version (e.g., v.1.17/containers/json)
 Request headers         | map[string]string | Request headers as key value pairs (without the authorization header)
 Request body            | []byte            | Raw request body
 Response status code    | int               | Status code from the Docker daemon
